@@ -1,0 +1,231 @@
+<head>
+  <style type="text/css">
+    main {
+      width: 100%;
+      /*max-width: 1080px;*/
+      margin: 0 auto;
+    }
+
+    .controller {
+      position: fixed;
+      top: 2rem;
+      left: 3rem;
+      z-index: 9;
+    }
+    
+    .canvas_holder {
+      position: relative;
+      /*width: 100%;*/
+    }
+
+    .canvas_holder canvas {
+      max-width: 100%;
+    }
+
+    .image_holder {
+      width: 100%;
+    }
+
+    .image_holder img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .hide {
+      display: none;
+    }
+  </style>
+
+  <script type="text/javascript" src='{{ url_for("static", filename="json/%s.json" % (filename)) }}'></script>
+  <script type="text/javascript">
+    function inside(point, vs) {
+      var x = point[0], y = point[1];
+
+      var inside = false;
+      for (var i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+        var xi = vs[i][0], yi = vs[i][1];
+        var xj = vs[j][0], yj = vs[j][1];
+
+        var intersect = ((yi > y) != (yj > y))
+        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+
+      return inside;
+    };
+
+    class History {
+      constructor(canvas, ctx) {
+        this.canvas = canvas;
+        this.ctx = ctx;
+        this.undo_list = [];
+        this.redo_list = [];
+        this.points = [];
+      }
+
+      addPoints(point) {
+        this.points.push(point);
+      }
+
+      saveState(list, keep_redo) {
+        keep_redo = keep_redo || false;
+        if (!keep_redo) {
+          this.redo_list = [];
+        }
+
+        (list || this.undo_list).push([this.canvas.toDataURL(), this.points.slice(0)]); 
+      }
+
+      undo() {
+        this.restoreState(this.undo_list, this.redo_list);
+      }
+
+      redo() {
+        this.restoreState(this.redo_list, this.undo_list);
+      }
+
+      restoreState(pop, push) {
+        if (pop.length) {
+          this.saveState(push, true);
+          var restore_state = pop.pop();
+          var img = new Image();
+          var ctx = this.ctx;
+
+          img.onload = function() {
+            ctx.clearRect(0, 0, 3200, 2200);
+            ctx.drawImage(img, 0, 0, 3200, 2200, 0, 0, 3200, 2200);
+          }
+
+          img.src = restore_state[0];
+          this.points = restore_state[1];
+        }
+      }
+    }
+
+    window.onload = function () {
+      var canvasHolder = document.getElementById("canvas_holder");
+      var layer1 = document.getElementById("layer1");
+      var layer2 = document.getElementById("layer2");
+      var layer3 = document.getElementById("layer3");
+      var ctx1 = layer1.getContext("2d");
+      var ctx2 = layer2.getContext("2d");
+      var ctx3 = layer3.getContext("2d");
+      var history3 = new History(layer3, ctx3);
+      var btnDoneSegment = document.getElementById("btnDoneSegment");
+      var btnConfirmSegment = document.getElementById("btnConfirmSegment");
+      var btnReset = document.getElementById("btnReset");
+      var btnUndo = document.getElementById("btnUndo");
+      var btnRedo = document.getElementById("btnRedo");
+      var btnExport = document.getElementById("btnExport");
+      var pointsForm = document.getElementById("pointsForm");
+      var pointsInput = document.getElementById("pointsInput");
+      var rect = layer1.getBoundingClientRect();
+      var scaleX = layer1.width / rect.width;
+      var scaleY = layer1.height / rect.height;
+      var img = document.getElementById("image");
+      var colorOriginal = "rgba(226, 33, 33, 0.3)";
+      var colorEdited = "rgba(0, 31, 206, 0.5)";
+      var colorLine = "green";
+      var lastPoints = [];
+
+      // Init 
+      ctx1.drawImage(img, 0, 0);
+
+      ctx1.fillStyle = colorOriginal;
+      masks.forEach(function(mask) {
+        ctx1.fillRect(mask[0], mask[1], 1, 1);
+      })
+
+      // Click
+      layer3.addEventListener("click", function(e) {
+        var mousePos = [
+          (e.clientX - canvasHolder.offsetLeft) * scaleX,
+          (e.clientY - canvasHolder.offsetTop) * scaleY
+        ]
+
+        history3.saveState();
+        history3.addPoints(mousePos);
+
+        if (history3.points.length == 1) {
+          ctx3.strokeStyle = colorLine;
+          ctx3.lineWidth = 3;
+        } else {
+          ctx3.beginPath();
+          ctx3.moveTo(history3.points[history3.points.length - 2][0], history3.points[history3.points.length - 2][1]);
+          ctx3.lineTo(mousePos[0], mousePos[1]);
+          ctx3.stroke();
+        }
+      });
+
+      btnDoneSegment.addEventListener("click", function(e) {
+        history3.saveState();
+        history3.addPoints(history3.points[0]);
+        ctx3.beginPath();
+        ctx3.moveTo(history3.points[history3.points.length - 2][0], history3.points[history3.points.length - 2][1]);
+        ctx3.lineTo(history3.points[0][0], history3.points[0][1]);
+        ctx3.stroke();
+      })
+
+      ctx2.fillStyle = colorEdited;
+      btnConfirmSegment.addEventListener("click", function(e) {
+        ctx2.clearRect(0, 0, layer2.width, layer2.height);
+        lastPoints = [];
+
+        masks.forEach(function(mask) {
+          if (inside(mask, history3.points)) {
+            ctx2.fillRect(mask[0], mask[1], 1, 1);
+            lastPoints.push(mask);
+          }
+        })
+        history3.points = [];
+        ctx3.clearRect(0, 0, layer3.width, layer3.height);
+      })
+
+      btnUndo.addEventListener("click", function(e) {
+        history3.undo();
+      })
+
+      btnRedo.addEventListener("click", function(e) {
+        history3.redo();
+      })
+
+      btnReset.addEventListener("click", function(e) {
+        history3.points = [];
+        ctx2.clearRect(0, 0, layer2.width, layer2.height);
+        ctx3.clearRect(0, 0, layer3.width, layer3.height);
+      })
+
+      btnExport.addEventListener("click", function(e) {
+        e.preventDefault();
+        pointsInput.value = JSON.stringify(lastPoints);
+        pointsForm.submit();
+      })
+    }
+  </script>
+</head>
+
+<body>
+  <main>
+    <!-- <h1>Masking tool</h1> -->
+    <div class="image_holder hide">
+      <img id="image" src='{{ url_for("static", filename="images/%s.png" % (filename)) }}'>
+    </div>
+    <div class="controller">
+      <button id="btnDoneSegment">Done segment</button>
+      <button id="btnConfirmSegment">Confirm</button>
+      <button id="btnUndo">Undo</button>
+      <button id="btnRedo">Redo</button>
+      <button id="btnReset">Reset</button>
+      <form action="/export" method="POST" id="pointsForm">
+        <input type="hidden" name="filename" value="{{ filename }}">
+        <input type="hidden" name="points" id="pointsInput">
+        <button id="btnExport">Export</button>
+      </form>
+    </div>
+    <div id="canvas_holder" class="canvas_holder">
+      <canvas id="layer1" width="3200" height="2200"></canvas>
+      <canvas id="layer2" width="3200" height="2200" style="position: absolute; left: 0; top: 0; z-index: 1;"></canvas>
+      <canvas id="layer3" width="3200" height="2200" style="position: absolute; left: 0; top: 0; z-index: 2;"></canvas>
+    </div>
+  </main>
+</body>
